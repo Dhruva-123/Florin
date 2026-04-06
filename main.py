@@ -4,10 +4,10 @@ sell_orders = []
 buy_orders = []
 
 app = FastAPI()
-@app.post("/buy")
+@app.get("/buy")
 def buyer_page():
-    return {{"Hello" : "Buyer!"}
-            {"Hello" : "Buyer!"}}
+    return {"Hello" : "Buyer!"}
+
 
 if __name__ == "__main__":
     import uvicorn
