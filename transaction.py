@@ -26,21 +26,23 @@ class transaction:
     def trade_stocks(self, order_book, symbol):
         buy_orders = order_book.buy_orders[symbol]
         sell_orders = order_book.sell_orders[symbol]
+        trade_ids = []
         while buy_orders and sell_orders:
             trade_id = None
-            buy_price, buy_order = buy_orders[0]
-            sell_price, sell_order = sell_orders[0]
+            buy_price, buy_time, buy_order = buy_orders[0]
+            sell_price, sell_time, sell_order = sell_orders[0]
             buy_price = -buy_price
             ### using negative of buy_orders price because the heap we have is a hacked version of min_heap -> max_heap conversion. 
             if buy_price >= sell_price:
                 if (sell_order.quantity > 0 and buy_order.quantity > 0):
                     if buy_order.user_id != sell_order.user_id:
-                        if users[buy_order.user_id].cash_balance >= buy_order.price * min(buy_order.quantity, sell_order.quantity):
+                        buyer_id = buy_order.user_id
+                        seller_id = sell_order.user_id
+                        quantity = min(buy_order.quantity, sell_order.quantity)
+                        price = sell_order.price
+                        if users[buyer_id].cash_balance >= price*quantity:
                             trade_id = self.genetrate_trade_id()
-                            buyer_id = buy_order.user_id
-                            seller_id = sell_order.user_id
-                            quantity = min(buy_order.quantity, sell_order.quantity)
-                            price = sell_order.price
+                            trade_ids.append(trade_id)
                             users[buyer_id].cash_balance -= price * quantity
                             users[seller_id].cash_balance += price * quantity
                             buy_order.quantity -= quantity
@@ -50,7 +52,7 @@ class transaction:
                             if sell_order.quantity == 0:
                                 heapq.heappop(sell_orders)
                         else:
-                            warnings.warn(f"Buyer {buyer_id} has insufficient funds to execute the trade.")
+                            warnings.warn(f"Buyer {buy_order.user_id} has insufficient funds to execute the trade.")
                             break
                     else:
                         warnings.warn("Buyer and seller cannot be the same user.(You cannot sell to yourself bro.)")
@@ -63,7 +65,7 @@ class transaction:
                 break
             if trade_id:
                 self.add_trade_to_logs(trade_id, buyer_id, seller_id, symbol, quantity, price)
-        return trade_id
+        return trade_ids
 
     # Helper function 1 : adds the trade log to trade log array
     def add_trade_to_logs(self, trade_id, buyer_id, seller_id, symbol, quantity, price):
