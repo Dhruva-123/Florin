@@ -1,12 +1,14 @@
 from schemas import requestOrder, userAuth
-from orders import order, order_book, add_to_buy_orders, add_to_sell_orders
+from orders import order, order_book, add_to_buy_orders, add_to_sell_orders, order_id_generator
 from fastapi import FastAPI, Depends, HTTPException
 from passlib.context import CryptContext
 from user import user
 import jwt
 from datetime import datetime 
+from fastapi.security import OAuth2PasswordBearer
+from dotenv import load_dotenv
 import os
-
+load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 pwd_context = CryptContext(schemes=["bcrypt"])
 
@@ -17,18 +19,28 @@ data = {
     "orderbook": order_book()
 }
 
+###Creating app
+app = FastAPI()
+
 ### Helper functions
+
+
+#Token retreiver
+oauth2scheme = OAuth2PasswordBearer(tokenUrl="/login")
+
 #login auth checker
-def login_authenticator(user_id : str, password : str):
+def login_authenticator(token : str = Depends(oauth2scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Token corrupted... ")
+    user_id = payload.get("user_id")
     if data["users_with_password"].get(user_id):
-        if pwd_context.verify(password, data["users_with_password"].get(user_id)):
-            return user_id
-        else:
-            raise HTTPException(status_code = 401, detail = "Wrong password.")
+        return user_id
     else:
         raise HTTPException(status_code = 401, detail = "User not found... Go register if you haven't yet!")
 
-app = FastAPI()
+
 ### Public pages
 
 #Login page
@@ -36,11 +48,9 @@ app = FastAPI()
 def login_page(login_details : userAuth):
     user_id = login_details.user_id
     unhased_password = login_details.password
-    email = login_details.email
     if data["users_with_password"].get(user_id) and pwd_context.verify(unhased_password, data["users_with_password"].get(user_id)):
-        if data["users_with_email"].get(user_id) and data["users_with_email"].get(user_id) == email:
-            token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithms=["HS256"])
-            return {"access_token" : token}
+        token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
+        return {"access_token" : token}
     raise HTTPException(status_code = 401, detail = "Wrong login credentials...Try again")
 
 #Register page
@@ -59,27 +69,47 @@ def register_page(login_details : userAuth):
     data["users_with_email"][user_id] = email
     new_user.cash_balance = 10000
     new_user.created_at = datetime.now()
-    data["user_object"].get(user_id) = new_user
-    token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithms=["HS256"])
+    data["user_object"][user_id] = new_user
+    token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
     return {"access_token" : token}
     
 #Buyer page
 @app.post("/buy")
 def buyer_page(buy_request : requestOrder,user_id : str = Depends(login_authenticator)):
-    buy_request = order()
-    add_to_buy_orders()
+    buy_order = order(
+        order_id=order_id_generator(data["orderbook"], buy_request.symbol),
+        user_id=user_id,
+        symbol=buy_request.symbol,
+        quantity=buy_request.quantity,
+        price=buy_request.price,
+        status="open",
+        filled_quantity=0
+    )
+    data["orderbook"].buy_orders[buy_request.symbol].append(buy_order)
+    #add_to_buy_orders()
     return {"Mesage":"Buy order placed successfully!"}
 
 
 #seller page
 @app.post("/sell")
-def seller_page():
-    pass
+def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authenticator)):
+    sell_order = order(
+        order_id=order_id_generator(data["orderbook"], sell_request.symbol),
+        user_id=user_id,
+        symbol=sell_request.symbol,
+        quantity=sell_request.quantity,
+        price=sell_request.price,
+        status="open",
+        filled_quantity=0
+    )
+    data["orderbook"].sell_orders[sell_request.symbol].append(sell_order)
+    #add_to_sell_orders()
+    return {"Mesage":"Sell order placed successfully!"}
 
 # market place entire page. look at all the things available in the market
 @app.get("/market")
 def market_page():
-    pass
+    return data["orderbook"]
 
 # Look at your own portfolio. Different investments and the returns you have gotten. The Florin you have that is liquid and that is in assets. 
 @app.get("/portfolio")
