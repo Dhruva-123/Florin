@@ -1,8 +1,8 @@
-from schemas import requestOrder, userAuth
-from orders import order, order_book, add_to_buy_orders, add_to_sell_orders, order_id_generator
+from .schemas import requestOrder, userAuth
+from .orders import order, order_book, add_to_buy_orders, add_to_sell_orders, order_id_generator
 from fastapi import FastAPI, Depends, HTTPException
 from passlib.context import CryptContext
-from user import user
+from .user import user
 import jwt
 from datetime import datetime 
 from fastapi.security import OAuth2PasswordBearer
@@ -109,7 +109,11 @@ def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authe
 # market place entire page. look at all the things available in the market
 @app.get("/market")
 def market_page():
-    return data["orderbook"]
+    orderbook = data["orderbook"]
+    return {
+        "Buy Orders" : {symbol : [orderbook.buy_orders[symbol]] for symbol in orderbook.buy_orders.keys()},
+        "Sell Orders" : {symbol : [orderbook.sell_orders[symbol]] for symbol in orderbook.sell_orders.keys()}
+    }
 
 # Look at your own portfolio. Different investments and the returns you have gotten. The Florin you have that is liquid and that is in assets. 
 @app.get("/portfolio")
