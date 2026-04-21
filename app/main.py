@@ -1,31 +1,33 @@
 from .schemas import requestOrder, userAuth
 from .orders import order, order_book, add_to_buy_orders, add_to_sell_orders, order_id_generator
+from .user import User
+from .transaction import transaction
+from jose import jwt
 from fastapi import FastAPI, Depends, HTTPException
 from passlib.context import CryptContext
-from .user import user
-import jwt
 from datetime import datetime 
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 import os
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 pwd_context = CryptContext(schemes=["bcrypt"])
 
 data = {
     "user_object" : {},
     "users_with_password" : {},
-    "users_with_email" : {},
+    "emails" : set(),
     "orderbook": order_book()
 }
-
+transaction_instance = transaction()
 ###Creating app
 app = FastAPI()
 
 ### Helper functions
 
 
-#Token retreiver
+#Token retriever
 oauth2scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 #login auth checker
@@ -47,8 +49,8 @@ def login_authenticator(token : str = Depends(oauth2scheme)):
 @app.post("/login")
 def login_page(login_details : userAuth):
     user_id = login_details.user_id
-    unhased_password = login_details.password
-    if data["users_with_password"].get(user_id) and pwd_context.verify(unhased_password, data["users_with_password"].get(user_id)):
+    unhashed_password = login_details.password
+    if data["users_with_password"].get(user_id) and pwd_context.verify(unhashed_password, data["users_with_password"].get(user_id)):
         token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
         return {"access_token" : token}
     raise HTTPException(status_code = 401, detail = "Wrong login credentials...Try again")
@@ -57,18 +59,16 @@ def login_page(login_details : userAuth):
 @app.post("/register")
 def register_page(login_details : userAuth):
     user_id = login_details.user_id
-    unhased_password = login_details.password
+    unhashed_password = login_details.password
     email = login_details.email
     if data["users_with_password"].get(user_id):
         raise HTTPException(status_code = 400, detail = "User already exists")
     
-    if data["users_with_email"].get(user_id):
-        raise HTTPException(status_code = 400, detail= "User already exists")
-    new_user = user(user_id=user_id, password=pwd_context.hash(unhased_password), email=email)
-    data["users_with_password"][user_id] = pwd_context.hash(unhased_password)
-    data["users_with_email"][user_id] = email
-    new_user.cash_balance = 10000
-    new_user.created_at = datetime.now()
+    if email in data["emails"]:
+        raise HTTPException(status_code = 400, detail= "Email already exists")
+    new_user = User(user_id=user_id, password=pwd_context.hash(unhashed_password), email=email)
+    data["users_with_password"][user_id] = pwd_context.hash(unhashed_password)
+    data["emails"].add(email)
     data["user_object"][user_id] = new_user
     token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
     return {"access_token" : token}
@@ -85,9 +85,9 @@ def buyer_page(buy_request : requestOrder,user_id : str = Depends(login_authenti
         status="open",
         filled_quantity=0
     )
-    data["orderbook"].buy_orders[buy_request.symbol].append(buy_order)
-    #add_to_buy_orders()
-    return {"Mesage":"Buy order placed successfully!"}
+    add_to_buy_orders(data["orderbook"], buy_order.order_id, buy_order.user_id, buy_order.symbol, buy_order.quantity, buy_order.price, buy_order.filled_quantity, buy_order.status, buy_order.created_at)
+    transaction_instance.trade_stocks(data["orderbook"], buy_request.symbol, data["user_object"])
+    return {"Message":"Buy order placed successfully!"}
 
 
 #seller page
@@ -102,9 +102,9 @@ def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authe
         status="open",
         filled_quantity=0
     )
-    data["orderbook"].sell_orders[sell_request.symbol].append(sell_order)
-    #add_to_sell_orders()
-    return {"Mesage":"Sell order placed successfully!"}
+    add_to_sell_orders(data["orderbook"], sell_order.order_id, sell_order.user_id, sell_order.symbol, sell_order.quantity, sell_order.price, sell_order.filled_quantity, sell_order.status, sell_order.created_at)
+    transaction_instance.trade_stocks(data["orderbook"], sell_request.symbol, data["user_object"])
+    return {"Message":"Sell order placed successfully!"}
 
 # market place entire page. look at all the things available in the market
 @app.get("/market")
@@ -117,8 +117,12 @@ def market_page():
 
 # Look at your own portfolio. Different investments and the returns you have gotten. The Florin you have that is liquid and that is in assets. 
 @app.get("/portfolio")
-def portfolio_page():
-    pass
+def portfolio_page(user_id : str = Depends(login_authenticator)):
+    portfolio = data["user_object"].get(user_id)
+    if portfolio:
+        return portfolio
+    else:
+        raise HTTPException(status_code=404, detail="User not found.")
 
 # This is the general news and also company specific news that people can use to place their bets. This should be 2 different APIs but let's do this first
 @app.get("/news")
@@ -129,15 +133,16 @@ def news_page():
 
 # This is where you can look at all the trades that happened from the start of the entire server. 
 @app.get("/trade_history")
-def history_page():
-    pass
+def history_page(user_id : str = Depends(login_authenticator)):
+    if user_id == ADMIN_USER_ID:
+        return {"logs": [vars(log) for log in transaction_instance.logger.logs]}
+    else:
+        raise HTTPException(status_code=403, detail="You donot have access to this data.")
 
 # This is where you can look at the status of your agents that are running the market. 
 @app.get("/agents")
 def agents_page():
     pass
-
-
 
 if __name__ == "__main__":
     import uvicorn

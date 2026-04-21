@@ -1,4 +1,3 @@
-import .users from users
 import warnings
 import heapq
 
@@ -23,7 +22,7 @@ class trade_log:
 class transaction:
     def __init__(self):
         self.logger = trade_logger()
-    def trade_stocks(self, order_book, symbol):
+    def trade_stocks(self, order_book, symbol, users):
         buy_orders = order_book.buy_orders[symbol]
         sell_orders = order_book.sell_orders[symbol]
         trade_ids = []
@@ -41,10 +40,12 @@ class transaction:
                         quantity = min(buy_order.quantity, sell_order.quantity)
                         price = sell_order.price
                         if users[buyer_id].cash_balance >= price*quantity:
-                            trade_id = self.genetrate_trade_id()
+                            trade_id = self.generate_trade_id()
                             trade_ids.append(trade_id)
                             users[buyer_id].cash_balance -= price * quantity
+                            buy_order.filled_quantity += quantity
                             users[seller_id].cash_balance += price * quantity
+                            sell_order.filled_quantity += quantity
                             buy_order.quantity -= quantity
                             sell_order.quantity -= quantity
                             if buy_order.quantity == 0:
@@ -72,7 +73,7 @@ class transaction:
         self.logger.new_log(trade_id, buyer_id, seller_id, symbol, quantity, price)
 
     #helper function 2 : creates trade_id that is a 10-digit integer-string. 
-    def genetrate_trade_id(self):
+    def generate_trade_id(self):
         id = len(self.logger) + 1
         trade_id = str(id).zfill(10)
         return trade_id

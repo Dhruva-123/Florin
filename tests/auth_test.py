@@ -23,7 +23,7 @@ def test_register_validation(payload, expected_status):
     ({"user_id": "dupuser", "password": "pass1234", "email": "a@email.com"}, 200),
     ({"user_id": "dupuser", "password": "pass1234", "email": "a@email.com"}, 400),
 ])
-def test_duplicate_registeration(payload, expected_status):
+def test_duplicate_registration(payload, expected_status):
     response = client.post("/register", json=payload)
     assert response.status_code == expected_status
 
