@@ -12,6 +12,7 @@ import os
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+ADMIN_USER_PWD = os.getenv("ADMIN_USER_PWD")
 pwd_context = CryptContext(schemes=["bcrypt"])
 
 data = {
@@ -20,6 +21,7 @@ data = {
     "emails" : set(),
     "orderbook": order_book()
 }
+data["user_object"][ADMIN_USER_ID] = User(user_id=ADMIN_USER_ID, email="Admin@florin.com", password=ADMIN_USER_PWD)
 transaction_instance = transaction()
 ###Creating app
 app = FastAPI()
@@ -63,7 +65,6 @@ def register_page(login_details : userAuth):
     email = login_details.email
     if data["users_with_password"].get(user_id):
         raise HTTPException(status_code = 400, detail = "User already exists")
-    
     if email in data["emails"]:
         raise HTTPException(status_code = 400, detail= "Email already exists")
     new_user = User(user_id=user_id, password=pwd_context.hash(unhashed_password), email=email)
@@ -122,12 +123,15 @@ def portfolio_page(user_id : str = Depends(login_authenticator)):
     if portfolio:
         return portfolio
     else:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
 
 # This is the general news and also company specific news that people can use to place their bets. This should be 2 different APIs but let's do this first
 @app.get("/news")
-def news_page():
-    pass
+def news_page(user_id : str = Depends(login_authenticator)):
+    if data["user_object"].get(user_id):
+        pass ### News will be returned only when you are a registered user. 
+    else:
+        raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
 
 ### Only admin pages
 
@@ -141,8 +145,12 @@ def history_page(user_id : str = Depends(login_authenticator)):
 
 # This is where you can look at the status of your agents that are running the market. 
 @app.get("/agents")
-def agents_page():
-    pass
+def agents_page(user_id : str = Depends(login_authenticator)):
+    if user_id == ADMIN_USER_ID:
+        pass
+    else:
+        pass
+
 
 if __name__ == "__main__":
     import uvicorn
