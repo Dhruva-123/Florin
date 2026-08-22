@@ -9,6 +9,10 @@ Features
 - Invest into *Baskets(SIP) monthly with automated payments and watch your stock grow!
 - Practice aggressive day-trading strategies without fear with our `quick-news` feature that correlates world events to a bump or slump in the value of a particular stock. 
 
+ER Diagram
+
+![ER Diagram for Florin](./ER%20Diagram%20for%20Florin.png)
+
 How to use Florin?
 - This project is still in development. It can be installed locally and you can start trading with our agents following the given steps : 
 

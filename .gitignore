@@ -1,3 +1,4 @@
 .env
 venv/
 roadmap.md
+Script for table creation from ER diagram.sql
