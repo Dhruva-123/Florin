@@ -9,19 +9,47 @@ from datetime import datetime
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 import os
+from sqlalchemy import create_engine, text
+import re
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 ADMIN_USER_PWD = os.getenv("ADMIN_USER_PWD")
+ADMIN_USER_EMAIL = os.getenv("ADMIN_USER_EMAIL")
+DB_URL = os.getenv("DB_URL")
+SQL_DB_CREATION_QUERY_PATH = os.getenv("SQL_DB_CREATION_QUERY")
+SQL_TABLE_CREATION_QUERY_PATH = os.getenv("SQL_TABLE_CREATION_QUERY")
+SQL_ADMIN_CREATION_QUERY_PATH = os.getenv("SQL_ADMIN_CREATION_QUERY")
 pwd_context = CryptContext(schemes=["bcrypt"])
+queries = [SQL_DB_CREATION_QUERY_PATH, SQL_TABLE_CREATION_QUERY_PATH]
 
-data = {
-    "user_object" : {},
-    "users_with_password" : {},
-    "emails" : set(),
-    "orderbook": order_book()
-}
-data["user_object"][ADMIN_USER_ID] = User(user_id=ADMIN_USER_ID, email="Admin@florin.com", password=ADMIN_USER_PWD)
+engine = create_engine(DB_URL)
+
+# CREATING DATABASE AND TABLES
+with engine.connect() as connection:
+    for query in queries:
+        with open(query, "r") as f:
+            db_creation_query = f.read()
+        statements = re.split(r";\s*(?=[^']*'[^']*')", db_creation_query)
+        for statement in statements:
+            statement = statement.strip()
+            if statement:
+                connection.execute(text(statement))
+
+# ADMIN CREATION
+with engine.connect() as connection:
+    query = text("""
+        INSERT INTO users (email, phone_no, balance) 
+        VALUES (:email, NULL, 0)
+    """)
+    try:
+        connection.execute(query, {"email": ADMIN_USER_EMAIL})
+        connection.commit()
+        print("Admin created successfully.")
+    except Exception as e:
+        print(f"Error occurred while creating admin user: {e}")
+        connection.rollback()
+
 transaction_instance = transaction()
 ###Creating app
 app = FastAPI()
