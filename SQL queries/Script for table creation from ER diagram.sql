@@ -1,5 +1,7 @@
+USE Florin;
 CREATE TABLE `users` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
+  `hashed_pwd` varchar(255) NOT NULL,
   `email` varchar(255) UNIQUE NOT NULL,
   `phone_no` varchar(255),
   `balance` decimal NOT NULL DEFAULT 0,

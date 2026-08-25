@@ -10,6 +10,7 @@ from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 import os
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 import re
 load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -20,6 +21,7 @@ DB_URL = os.getenv("DB_URL")
 SQL_DB_CREATION_QUERY_PATH = os.getenv("SQL_DB_CREATION_QUERY")
 SQL_TABLE_CREATION_QUERY_PATH = os.getenv("SQL_TABLE_CREATION_QUERY")
 SQL_ADMIN_CREATION_QUERY_PATH = os.getenv("SQL_ADMIN_CREATION_QUERY")
+STARTING_BALANCE_FOR_A_NEW_USER = os.getenv("STARTING_BALANCE_FOR_A_NEW_USER")
 pwd_context = CryptContext(schemes=["bcrypt"])
 queries = [SQL_DB_CREATION_QUERY_PATH, SQL_TABLE_CREATION_QUERY_PATH]
 
@@ -61,44 +63,85 @@ app = FastAPI()
 oauth2scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 #login auth checker
-def login_authenticator(token : str = Depends(oauth2scheme)):
+async def login_authenticator(token : str = Depends(oauth2scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     except Exception as e:
         raise HTTPException(status_code=401, detail="Token corrupted... ")
     user_id = payload.get("user_id")
-    if data["users_with_password"].get(user_id):
-        return user_id
+    with engine.connect() as connection:
+        get_user_query = text("""
+    SELECT * FROM Users WHERE id = :user_id;
+    """)
+        try:
+            user_object = await connection.execute(get_user_query, {"user_id" : user_id})
+            user_object = user_object.scalar_one_or_none()
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
+    if user_object:
+        return user_object.id 
     else:
-        raise HTTPException(status_code = 401, detail = "User not found... Go register if you haven't yet!")
-
+        return None
 
 ### Public pages
 
 #Login page
 @app.post("/login")
-def login_page(login_details : userAuth):
+async def login_page(login_details : userAuth):
     user_id = login_details.user_id
-    unhashed_password = login_details.password
-    if data["users_with_password"].get(user_id) and pwd_context.verify(unhashed_password, data["users_with_password"].get(user_id)):
+    unhashed_pwd = login_details.password
+    with engine.connect() as connection:
+        pwd_extraction_query = text("""
+        SELECT hashed_pwd FROM Users WHERE id = :user_id;
+        """)
+        try:
+            hashed_pwd_object = await connection.execute(pwd_extraction_query, {"user_id" : user_id})
+            hashed_pwd = hashed_pwd_object.scalar_one_or_none()
+            if not hashed_pwd:
+                raise HTTPException(status_code=401, detail= "Wrong Login Credentials.")
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail= "Database Error")
+    if pwd_context.verify(unhashed_pwd, hashed_pwd):
         token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
         return {"access_token" : token}
-    raise HTTPException(status_code = 401, detail = "Wrong login credentials...Try again")
+    raise HTTPException(status_code = 401, detail = "Wrong Login Credentials")
 
 #Register page
 @app.post("/register")
-def register_page(login_details : userAuth):
+async def register_page(login_details : userAuth):
     user_id = login_details.user_id
     unhashed_password = login_details.password
     email = login_details.email
-    if data["users_with_password"].get(user_id):
+    with engine.connect() as connection:
+        get_user_query = text("""
+            SELECT * FROM Users WHERE id = :user_id;
+            """)
+        try:
+            user_object = await connection.execution(get_user_query, {"user_id", user_id})
+            user = user_object.scalar_one_or_none()
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
+    if user:
         raise HTTPException(status_code = 400, detail = "User already exists")
-    if email in data["emails"]:
-        raise HTTPException(status_code = 400, detail= "Email already exists")
-    new_user = User(user_id=user_id, password=pwd_context.hash(unhashed_password), email=email)
-    data["users_with_password"][user_id] = pwd_context.hash(unhashed_password)
-    data["emails"].add(email)
-    data["user_object"][user_id] = new_user
+    with engine.connect() as connection:
+        verify_if_email_exists_query = text("""
+    SELECT * FROM Users WHERE email = :email;
+    """)
+        try:
+            result = await connection.execute(verify_if_email_exists_query, {"email", email})
+            email = result.scalar_one_or_none()
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
+    if email:
+        raise HTTPException(status_code=400, detail="Email ID already in use.")
+    with engine.connect() as connection:
+        new_user_appending_query = text("""
+        INSERT INTO Users(hashed_pwd, email, balance) VALUES(:hashed_pwd, :email, :STARTING_BALANCE_FOR_A_NEW_USER);
+        """)
+        try:
+            await connection.execute(new_user_appending_query, {"hashed_pwd" : pwd_context.hash(unhashed_password), "email" : email, "STARTING_BALANCE_FOR_A_NEW_USER" : STARTING_BALANCE_FOR_A_NEW_USER})
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
     token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
     return {"access_token" : token}
     
