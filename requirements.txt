@@ -1,6 +1,9 @@
+email-validator
 fastapi
 uvicorn
 passlib[bcrypt]
 python-jose[cryptography]
 python-dotenv
 pytest
+sqlalchemy
+mysql-connector-python

@@ -113,106 +113,230 @@ async def register_page(login_details : userAuth):
     unhashed_password = login_details.password
     email = login_details.email
     with engine.connect() as connection:
+        # Check if user_id exists
         get_user_query = text("""
             SELECT * FROM Users WHERE id = :user_id;
             """)
         try:
-            user_object = await connection.execution(get_user_query, {"user_id", user_id})
+            user_object = await connection.execute(get_user_query, {"user_id": user_id})
             user = user_object.scalar_one_or_none()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
-    if user:
-        raise HTTPException(status_code = 400, detail = "User already exists")
-    with engine.connect() as connection:
+        
+        if user:
+            raise HTTPException(status_code = 400, detail = "User already exists")
+        
+        # Check if email exists
         verify_if_email_exists_query = text("""
-    SELECT * FROM Users WHERE email = :email;
-    """)
+            SELECT * FROM Users WHERE email = :email;
+            """)
         try:
-            result = await connection.execute(verify_if_email_exists_query, {"email", email})
-            email = result.scalar_one_or_none()
+            result = await connection.execute(verify_if_email_exists_query, {"email": email})
+            email_exists = result.scalar_one_or_none()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
-    if email:
-        raise HTTPException(status_code=400, detail="Email ID already in use.")
-    with engine.connect() as connection:
+        
+        if email_exists:
+            raise HTTPException(status_code=400, detail="Email ID already in use.")
+        
+        # Insert new user
         new_user_appending_query = text("""
-        INSERT INTO Users(hashed_pwd, email, balance) VALUES(:hashed_pwd, :email, :STARTING_BALANCE_FOR_A_NEW_USER);
+        INSERT INTO Users(hashed_pwd, email, balance) VALUES(:hashed_pwd, :email, :balance);
         """)
         try:
-            await connection.execute(new_user_appending_query, {"hashed_pwd" : pwd_context.hash(unhashed_password), "email" : email, "STARTING_BALANCE_FOR_A_NEW_USER" : STARTING_BALANCE_FOR_A_NEW_USER})
+            await connection.execute(new_user_appending_query, {"hashed_pwd" : pwd_context.hash(unhashed_password), "email" : email, "balance" : STARTING_BALANCE_FOR_A_NEW_USER})
+            connection.commit()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
+    
     token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
     return {"access_token" : token}
     
 #Buyer page
 @app.post("/buy")
-def buyer_page(buy_request : requestOrder,user_id : str = Depends(login_authenticator)):
-    buy_order = order(
-        order_id=order_id_generator(data["orderbook"], buy_request.symbol),
-        user_id=user_id,
-        symbol=buy_request.symbol,
-        quantity=buy_request.quantity,
-        price=buy_request.price,
-        status="open",
-        filled_quantity=0
-    )
-    add_to_buy_orders(data["orderbook"], buy_order.order_id, buy_order.user_id, buy_order.symbol, buy_order.quantity, buy_order.price, buy_order.filled_quantity, buy_order.status, buy_order.created_at)
-    transaction_instance.trade_stocks(data["orderbook"], buy_request.symbol, data["user_object"])
+def buyer_page(buy_request : requestOrder, user_id : str = Depends(login_authenticator)):
+    with engine.connect() as connection:
+        # Get stock
+        stock_query = text("SELECT id FROM stocks WHERE symbol = :symbol")
+        stock_result = connection.execute(stock_query, {"symbol": buy_request.symbol})
+        stock = stock_result.scalar_one_or_none()
+        if not stock:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        
+        # Insert buy order
+        buy_order_query = text("""
+            INSERT INTO bids (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
+            VALUES (:user_id, :stock_id, 'buy', :quantity, :quantity, :price, 'open')
+        """)
+        try:
+            connection.execute(buy_order_query, {
+                "user_id": user_id,
+                "stock_id": stock,
+                "quantity": int(buy_request.quantity),
+                "price": buy_request.price
+            })
+            connection.commit()
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
     return {"Message":"Buy order placed successfully!"}
 
 
 #seller page
 @app.post("/sell")
 def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authenticator)):
-    sell_order = order(
-        order_id=order_id_generator(data["orderbook"], sell_request.symbol),
-        user_id=user_id,
-        symbol=sell_request.symbol,
-        quantity=sell_request.quantity,
-        price=sell_request.price,
-        status="open",
-        filled_quantity=0
-    )
-    add_to_sell_orders(data["orderbook"], sell_order.order_id, sell_order.user_id, sell_order.symbol, sell_order.quantity, sell_order.price, sell_order.filled_quantity, sell_order.status, sell_order.created_at)
-    transaction_instance.trade_stocks(data["orderbook"], sell_request.symbol, data["user_object"])
+    with engine.connect() as connection:
+        # Get stock
+        stock_query = text("SELECT id FROM stocks WHERE symbol = :symbol")
+        stock_result = connection.execute(stock_query, {"symbol": sell_request.symbol})
+        stock = stock_result.scalar_one_or_none()
+        if not stock:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        
+        # Insert sell order
+        sell_order_query = text("""
+            INSERT INTO asks (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
+            VALUES (:user_id, :stock_id, 'sell', :quantity, :quantity, :price, 'open')
+        """)
+        try:
+            connection.execute(sell_order_query, {
+                "user_id": user_id,
+                "stock_id": stock,
+                "quantity": int(sell_request.quantity),
+                "price": sell_request.price
+            })
+            connection.commit()
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
     return {"Message":"Sell order placed successfully!"}
 
 # market place entire page. look at all the things available in the market
 @app.get("/market")
 def market_page():
-    orderbook = data["orderbook"]
-    return {
-        "Buy Orders" : {symbol : [orderbook.buy_orders[symbol]] for symbol in orderbook.buy_orders.keys()},
-        "Sell Orders" : {symbol : [orderbook.sell_orders[symbol]] for symbol in orderbook.sell_orders.keys()}
-    }
+    with engine.connect() as connection:
+        # Get all open bids
+        bids_query = text("""
+            SELECT b.id, s.symbol, b.price, b.quantity_remaining 
+            FROM bids b
+            JOIN stocks s ON b.stock_id = s.id
+            WHERE b.status = 'open'
+            ORDER BY b.price DESC
+        """)
+        
+        # Get all open asks
+        asks_query = text("""
+            SELECT a.id, s.symbol, a.price, a.quantity_remaining
+            FROM asks a
+            JOIN stocks s ON a.stock_id = s.id
+            WHERE a.status = 'open'
+            ORDER BY a.price ASC
+        """)
+        
+        try:
+            bids_result = connection.execute(bids_query)
+            asks_result = connection.execute(asks_query)
+            
+            bids_dict = {}
+            for bid in bids_result:
+                symbol = bid[1]
+                if symbol not in bids_dict:
+                    bids_dict[symbol] = []
+                bids_dict[symbol].append({"id": bid[0], "price": bid[2], "quantity": bid[3]})
+            
+            asks_dict = {}
+            for ask in asks_result:
+                symbol = ask[1]
+                if symbol not in asks_dict:
+                    asks_dict[symbol] = []
+                asks_dict[symbol].append({"id": ask[0], "price": ask[2], "quantity": ask[3]})
+            
+            return {"Buy Orders": bids_dict, "Sell Orders": asks_dict}
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
 
 # Look at your own portfolio. Different investments and the returns you have gotten. The Florin you have that is liquid and that is in assets. 
 @app.get("/portfolio")
 def portfolio_page(user_id : str = Depends(login_authenticator)):
-    portfolio = data["user_object"].get(user_id)
-    if portfolio:
-        return portfolio
-    else:
-        raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
+    with engine.connect() as connection:
+        # Get user balance
+        user_query = text("SELECT balance FROM users WHERE id = :user_id")
+        user_result = connection.execute(user_query, {"user_id": user_id})
+        balance = user_result.scalar_one_or_none()
+        if balance is None:
+            raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
+        
+        # Get user holdings
+        holdings_query = text("""
+            SELECT h.stock_id, s.symbol, h.quantity, h.avg_buy_price
+            FROM holdings h
+            JOIN stocks s ON h.stock_id = s.id
+            WHERE h.user_id = :user_id
+        """)
+        
+        try:
+            holdings_result = connection.execute(holdings_query, {"user_id": user_id})
+            holdings = []
+            for holding in holdings_result:
+                holdings.append({
+                    "stock_id": holding[0],
+                    "symbol": holding[1],
+                    "quantity": holding[2],
+                    "avg_buy_price": holding[3]
+                })
+            
+            return {"balance": balance, "holdings": holdings}
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
 
 # This is the general news and also company specific news that people can use to place their bets. This should be 2 different APIs but let's do this first
 @app.get("/news")
 def news_page(user_id : str = Depends(login_authenticator)):
-    if data["user_object"].get(user_id):
-        pass ### News will be returned only when you are a registered user. 
-    else:
-        raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
+    with engine.connect() as connection:
+        # Verify user exists
+        user_query = text("SELECT id FROM users WHERE id = :user_id")
+        user_result = connection.execute(user_query, {"user_id": user_id})
+        if not user_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
+        
+        # TODO: Fetch news from external API
+        return {"news": [], "message": "News feature coming soon"}
 
 ### Only admin pages
 
 # This is where you can look at all the trades that happened from the start of the entire server. 
 @app.get("/trade_history")
 def history_page(user_id : str = Depends(login_authenticator)):
-    if user_id == ADMIN_USER_ID:
-        return {"logs": [vars(log) for log in transaction_instance.logger.logs]}
-    else:
-        raise HTTPException(status_code=403, detail="You donot have access to this data.")
+    with engine.connect() as connection:
+        # Check if admin
+        user_query = text("SELECT email FROM users WHERE id = :user_id")
+        user_result = connection.execute(user_query, {"user_id": user_id})
+        user_email = user_result.scalar_one_or_none()
+        
+        if user_email != ADMIN_USER_EMAIL:
+            raise HTTPException(status_code=403, detail="You do not have access to this data.")
+        
+        # Get all transactions
+        trades_query = text("""
+            SELECT id, buyer_id, seller_id, stock_id, quantity, price_at_trade, created_at
+            FROM transactions
+            ORDER BY created_at DESC
+        """)
+        
+        try:
+            trades_result = connection.execute(trades_query)
+            trades = []
+            for trade in trades_result:
+                trades.append({
+                    "id": trade[0],
+                    "buyer_id": trade[1],
+                    "seller_id": trade[2],
+                    "stock_id": trade[3],
+                    "quantity": trade[4],
+                    "price": trade[5],
+                    "created_at": trade[6]
+                })
+            return {"logs": trades}
+        except SQLAlchemyError:
+            raise HTTPException(status_code=500, detail="Database Error")
 
 # This is where you can look at the status of your agents that are running the market. 
 @app.get("/agents")
