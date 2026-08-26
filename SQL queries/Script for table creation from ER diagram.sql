@@ -1,5 +1,5 @@
 USE Florin;
-CREATE TABLE `users` (
+CREATE TABLE IF NOT EXISTS `Users` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `hashed_pwd` varchar(255) NOT NULL,
   `email` varchar(255) UNIQUE NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE `users` (
   `created_at` timestamp DEFAULT (now())
 );
 
-CREATE TABLE `stocks` (
+CREATE TABLE IF NOT EXISTS `Stocks` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `symbol` varchar(255) UNIQUE NOT NULL,
   `name` varchar(255) NOT NULL,
@@ -18,7 +18,7 @@ CREATE TABLE `stocks` (
   `returns_1mo` decimal
 );
 
-CREATE TABLE `holdings` (
+CREATE TABLE IF NOT EXISTS `Holdings` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `stock_id` int NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE `holdings` (
   `avg_buy_price` decimal
 );
 
-CREATE TABLE `bids` (
+CREATE TABLE IF NOT EXISTS `Bids` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `stock_id` int NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE `bids` (
   `created_at` timestamp DEFAULT (now())
 );
 
-CREATE TABLE `asks` (
+CREATE TABLE IF NOT EXISTS `Asks` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `stock_id` int NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE `asks` (
   `created_at` timestamp DEFAULT (now())
 );
 
-CREATE TABLE `transactions` (
+CREATE TABLE IF NOT EXISTS `Transactions` (
   `id` int PRIMARY KEY AUTO_INCREMENT,
   `bid_id` int NOT NULL,
   `ask_id` int NOT NULL,
@@ -62,24 +62,24 @@ CREATE TABLE `transactions` (
   `created_at` timestamp DEFAULT (now())
 );
 
-ALTER TABLE `holdings` ADD FOREIGN KEY (`user_id`) REFERENCES `users` (`id`);
+ALTER TABLE `Holdings` ADD FOREIGN KEY (`user_id`) REFERENCES `Users` (`id`);
 
-ALTER TABLE `holdings` ADD FOREIGN KEY (`stock_id`) REFERENCES `stocks` (`id`);
+ALTER TABLE `Holdings` ADD FOREIGN KEY (`stock_id`) REFERENCES `Stocks` (`id`);
 
-ALTER TABLE `bids` ADD FOREIGN KEY (`user_id`) REFERENCES `users` (`id`);
+ALTER TABLE `Bids` ADD FOREIGN KEY (`user_id`) REFERENCES `Users` (`id`);
 
-ALTER TABLE `bids` ADD FOREIGN KEY (`stock_id`) REFERENCES `stocks` (`id`);
+ALTER TABLE `Bids` ADD FOREIGN KEY (`stock_id`) REFERENCES `Stocks` (`id`);
 
-ALTER TABLE `asks` ADD FOREIGN KEY (`user_id`) REFERENCES `users` (`id`);
+ALTER TABLE `Asks` ADD FOREIGN KEY (`user_id`) REFERENCES `Users` (`id`);
 
-ALTER TABLE `asks` ADD FOREIGN KEY (`stock_id`) REFERENCES `stocks` (`id`);
+ALTER TABLE `Asks` ADD FOREIGN KEY (`stock_id`) REFERENCES `Stocks` (`id`);
 
-ALTER TABLE `transactions` ADD FOREIGN KEY (`bid_id`) REFERENCES `bids` (`id`);
+ALTER TABLE `Transactions` ADD FOREIGN KEY (`bid_id`) REFERENCES `Bids` (`id`);
 
-ALTER TABLE `transactions` ADD FOREIGN KEY (`ask_id`) REFERENCES `asks` (`id`);
+ALTER TABLE `Transactions` ADD FOREIGN KEY (`ask_id`) REFERENCES `Asks` (`id`);
 
-ALTER TABLE `transactions` ADD FOREIGN KEY (`buyer_id`) REFERENCES `users` (`id`);
+ALTER TABLE `Transactions` ADD FOREIGN KEY (`buyer_id`) REFERENCES `Users` (`id`);
 
-ALTER TABLE `transactions` ADD FOREIGN KEY (`seller_id`) REFERENCES `users` (`id`);
+ALTER TABLE `Transactions` ADD FOREIGN KEY (`seller_id`) REFERENCES `Users` (`id`);
 
-ALTER TABLE `transactions` ADD FOREIGN KEY (`stock_id`) REFERENCES `stocks` (`id`);
+ALTER TABLE `Transactions` ADD FOREIGN KEY (`stock_id`) REFERENCES `Stocks` (`id`);

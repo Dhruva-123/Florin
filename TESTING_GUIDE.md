@@ -127,7 +127,7 @@ Added missing dependencies:
 2. **Python 3.9+** with pip
 3. **.env file** configured with:
    ```env
-   DB_URL=mysql+pymysql://root:password@localhost/florin
+  DB_URL=mysql+pymysql://root:password@localhost/Florin
    SECRET_KEY=your-secret-key-here
    ADMIN_USER_EMAIL=admin@florin.com
    ADMIN_USER_PWD=admin_password

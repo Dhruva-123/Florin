@@ -32,7 +32,7 @@ with engine.connect() as connection:
     for query in queries:
         with open(query, "r") as f:
             db_creation_query = f.read()
-        statements = re.split(r";\s*(?=[^']*'[^']*')", db_creation_query)
+        statements = db_creation_query.split(";")
         for statement in statements:
             statement = statement.strip()
             if statement:
@@ -41,7 +41,7 @@ with engine.connect() as connection:
 # ADMIN CREATION
 with engine.connect() as connection:
     query = text("""
-        INSERT INTO users (email, phone_no, balance) 
+        INSERT INTO Users (email, phone_no, balance) 
         VALUES (:email, NULL, 0)
     """)
     try:
@@ -74,12 +74,12 @@ async def login_authenticator(token : str = Depends(oauth2scheme)):
     SELECT * FROM Users WHERE id = :user_id;
     """)
         try:
-            user_object = await connection.execute(get_user_query, {"user_id" : user_id})
+            user_object = connection.execute(get_user_query, {"user_id" : user_id})
             user_object = user_object.scalar_one_or_none()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
     if user_object:
-        return user_object.id 
+        return user_object
     else:
         return None
 
@@ -88,17 +88,17 @@ async def login_authenticator(token : str = Depends(oauth2scheme)):
 #Login page
 @app.post("/login")
 async def login_page(login_details : userAuth):
-    user_id = login_details.user_id
+    email = login_details.email
     unhashed_pwd = login_details.password
     with engine.connect() as connection:
         pwd_extraction_query = text("""
-        SELECT hashed_pwd FROM Users WHERE id = :user_id;
+        SELECT id, hashed_pwd FROM Users WHERE email = :email;
         """)
         try:
-            hashed_pwd_object = await connection.execute(pwd_extraction_query, {"user_id" : user_id})
-            hashed_pwd = hashed_pwd_object.scalar_one_or_none()
-            if not hashed_pwd:
+            user_object = connection.execute(pwd_extraction_query, {"email" : email}).first()
+            if not user_object:
                 raise HTTPException(status_code=401, detail= "Wrong Login Credentials.")
+            user_id, hashed_pwd = user_object
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail= "Database Error")
     if pwd_context.verify(unhashed_pwd, hashed_pwd):
@@ -112,13 +112,14 @@ async def register_page(login_details : userAuth):
     user_id = login_details.user_id
     unhashed_password = login_details.password
     email = login_details.email
+    registered_user_id = None
     with engine.connect() as connection:
         # Check if user_id exists
         get_user_query = text("""
             SELECT * FROM Users WHERE id = :user_id;
             """)
         try:
-            user_object = await connection.execute(get_user_query, {"user_id": user_id})
+            user_object = connection.execute(get_user_query, {"user_id": user_id})
             user = user_object.scalar_one_or_none()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
@@ -131,7 +132,7 @@ async def register_page(login_details : userAuth):
             SELECT * FROM Users WHERE email = :email;
             """)
         try:
-            result = await connection.execute(verify_if_email_exists_query, {"email": email})
+            result = connection.execute(verify_if_email_exists_query, {"email": email})
             email_exists = result.scalar_one_or_none()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
@@ -144,12 +145,13 @@ async def register_page(login_details : userAuth):
         INSERT INTO Users(hashed_pwd, email, balance) VALUES(:hashed_pwd, :email, :balance);
         """)
         try:
-            await connection.execute(new_user_appending_query, {"hashed_pwd" : pwd_context.hash(unhashed_password), "email" : email, "balance" : STARTING_BALANCE_FOR_A_NEW_USER})
+            insert_result = connection.execute(new_user_appending_query, {"hashed_pwd" : pwd_context.hash(unhashed_password), "email" : email, "balance" : STARTING_BALANCE_FOR_A_NEW_USER})
+            registered_user_id = insert_result.lastrowid
             connection.commit()
         except SQLAlchemyError:
             raise HTTPException(status_code=500, detail="Database Error")
     
-    token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
+    token = jwt.encode({"user_id" : registered_user_id}, SECRET_KEY, algorithm="HS256")
     return {"access_token" : token}
     
 #Buyer page
@@ -157,7 +159,7 @@ async def register_page(login_details : userAuth):
 def buyer_page(buy_request : requestOrder, user_id : str = Depends(login_authenticator)):
     with engine.connect() as connection:
         # Get stock
-        stock_query = text("SELECT id FROM stocks WHERE symbol = :symbol")
+        stock_query = text("SELECT id FROM Stocks WHERE symbol = :symbol")
         stock_result = connection.execute(stock_query, {"symbol": buy_request.symbol})
         stock = stock_result.scalar_one_or_none()
         if not stock:
@@ -165,7 +167,7 @@ def buyer_page(buy_request : requestOrder, user_id : str = Depends(login_authent
         
         # Insert buy order
         buy_order_query = text("""
-            INSERT INTO bids (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
+            INSERT INTO Bids (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
             VALUES (:user_id, :stock_id, 'buy', :quantity, :quantity, :price, 'open')
         """)
         try:
@@ -186,7 +188,7 @@ def buyer_page(buy_request : requestOrder, user_id : str = Depends(login_authent
 def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authenticator)):
     with engine.connect() as connection:
         # Get stock
-        stock_query = text("SELECT id FROM stocks WHERE symbol = :symbol")
+        stock_query = text("SELECT id FROM Stocks WHERE symbol = :symbol")
         stock_result = connection.execute(stock_query, {"symbol": sell_request.symbol})
         stock = stock_result.scalar_one_or_none()
         if not stock:
@@ -194,7 +196,7 @@ def seller_page(sell_request : requestOrder, user_id : str = Depends(login_authe
         
         # Insert sell order
         sell_order_query = text("""
-            INSERT INTO asks (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
+            INSERT INTO Asks (user_id, stock_id, order_type, quantity, quantity_remaining, price, status)
             VALUES (:user_id, :stock_id, 'sell', :quantity, :quantity, :price, 'open')
         """)
         try:
@@ -216,8 +218,8 @@ def market_page():
         # Get all open bids
         bids_query = text("""
             SELECT b.id, s.symbol, b.price, b.quantity_remaining 
-            FROM bids b
-            JOIN stocks s ON b.stock_id = s.id
+            FROM Bids b
+            JOIN Stocks s ON b.stock_id = s.id
             WHERE b.status = 'open'
             ORDER BY b.price DESC
         """)
@@ -225,8 +227,8 @@ def market_page():
         # Get all open asks
         asks_query = text("""
             SELECT a.id, s.symbol, a.price, a.quantity_remaining
-            FROM asks a
-            JOIN stocks s ON a.stock_id = s.id
+            FROM Asks a
+            JOIN Stocks s ON a.stock_id = s.id
             WHERE a.status = 'open'
             ORDER BY a.price ASC
         """)
@@ -258,7 +260,7 @@ def market_page():
 def portfolio_page(user_id : str = Depends(login_authenticator)):
     with engine.connect() as connection:
         # Get user balance
-        user_query = text("SELECT balance FROM users WHERE id = :user_id")
+        user_query = text("SELECT balance FROM Users WHERE id = :user_id")
         user_result = connection.execute(user_query, {"user_id": user_id})
         balance = user_result.scalar_one_or_none()
         if balance is None:
@@ -267,8 +269,8 @@ def portfolio_page(user_id : str = Depends(login_authenticator)):
         # Get user holdings
         holdings_query = text("""
             SELECT h.stock_id, s.symbol, h.quantity, h.avg_buy_price
-            FROM holdings h
-            JOIN stocks s ON h.stock_id = s.id
+            FROM Holdings h
+            JOIN Stocks s ON h.stock_id = s.id
             WHERE h.user_id = :user_id
         """)
         
@@ -292,7 +294,7 @@ def portfolio_page(user_id : str = Depends(login_authenticator)):
 def news_page(user_id : str = Depends(login_authenticator)):
     with engine.connect() as connection:
         # Verify user exists
-        user_query = text("SELECT id FROM users WHERE id = :user_id")
+        user_query = text("SELECT id FROM Users WHERE id = :user_id")
         user_result = connection.execute(user_query, {"user_id": user_id})
         if not user_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="User not found. Please login to continue.")
@@ -307,7 +309,7 @@ def news_page(user_id : str = Depends(login_authenticator)):
 def history_page(user_id : str = Depends(login_authenticator)):
     with engine.connect() as connection:
         # Check if admin
-        user_query = text("SELECT email FROM users WHERE id = :user_id")
+        user_query = text("SELECT email FROM Users WHERE id = :user_id")
         user_result = connection.execute(user_query, {"user_id": user_id})
         user_email = user_result.scalar_one_or_none()
         
@@ -317,7 +319,7 @@ def history_page(user_id : str = Depends(login_authenticator)):
         # Get all transactions
         trades_query = text("""
             SELECT id, buyer_id, seller_id, stock_id, quantity, price_at_trade, created_at
-            FROM transactions
+            FROM Transactions
             ORDER BY created_at DESC
         """)
         

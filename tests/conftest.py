@@ -42,47 +42,38 @@ def db_session():
 
 
 @pytest.fixture(scope="function", autouse=True)
-def reset_test_tables():
+def reset_test_tables(db_session):
     """Reset test tables before each test"""
-    DB_URL = os.getenv("DB_URL")
-    if not DB_URL:
-        return
-    
-    engine = create_engine(DB_URL)
-    
     # Tables to clear (in reverse dependency order)
     tables_to_clear = [
-        "transactions",
-        "holdings",
-        "asks",
-        "bids",
+           "Transactions",
+           "Holdings",
+           "Asks",
+           "Bids",
     ]
     
-    with engine.connect() as connection:
-        try:
-            for table in tables_to_clear:
-                connection.execute(text(f"DELETE FROM {table}"))
-            
-            # Keep admin user but delete test users
-            connection.execute(text("DELETE FROM users WHERE email NOT LIKE '%admin%'"))
-            
-            connection.commit()
-        except Exception as e:
-            print(f"Warning: Could not reset tables: {e}")
-            connection.rollback()
+    try:
+        for table in tables_to_clear:
+            db_session.execute(text(f"DELETE FROM {table}"))
+
+        # Keep admin user but delete test users
+            db_session.execute(text("DELETE FROM Users WHERE email NOT LIKE '%admin%'"))
+        db_session.commit()
+    except Exception as e:
+        print(f"Warning: Could not reset tables: {e}")
+        db_session.rollback()
     
     yield
     
     # Cleanup after test
-    with engine.connect() as connection:
-        try:
-            for table in tables_to_clear:
-                connection.execute(text(f"DELETE FROM {table}"))
-            connection.execute(text("DELETE FROM users WHERE email NOT LIKE '%admin%'"))
-            connection.commit()
-        except Exception as e:
-            print(f"Warning: Could not cleanup after test: {e}")
-            connection.rollback()
+    try:
+        for table in tables_to_clear:
+            db_session.execute(text(f"DELETE FROM {table}"))
+            db_session.execute(text("DELETE FROM Users WHERE email NOT LIKE '%admin%'"))
+        db_session.commit()
+    except Exception as e:
+        print(f"Warning: Could not cleanup after test: {e}")
+        db_session.rollback()
 
 
 def pytest_configure(config):

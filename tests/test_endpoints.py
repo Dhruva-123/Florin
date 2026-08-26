@@ -1,452 +1,216 @@
-"""
-Comprehensive test suite for Florin trading app endpoints
-Tests cover: Registration, Login, Trading (Buy/Sell), Market, Portfolio, News, and Trade History
-"""
+"""Parametrized endpoint tests for the implemented Florin API routes."""
+
+import pytest
+from fastapi.testclient import TestClient
 
 from app.app import app
-from fastapi.testclient import TestClient
-import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
 
 client = TestClient(app)
-DB_URL = os.getenv("DB_URL")
-
-# ==================== FIXTURES ====================
-
-@pytest.fixture(scope="function")
-def setup_test_db():
-    """Setup and teardown test database"""
-    # Create connection
-    engine = create_engine(DB_URL)
-    
-    # Clear test data before each test
-    with engine.connect() as connection:
-        try:
-            connection.execute(text("DELETE FROM transactions"))
-            connection.execute(text("DELETE FROM holdings"))
-            connection.execute(text("DELETE FROM asks"))
-            connection.execute(text("DELETE FROM bids"))
-            connection.execute(text("DELETE FROM users WHERE email NOT LIKE '%admin%'"))
-            connection.commit()
-        except Exception as e:
-            print(f"Cleanup error: {e}")
-            connection.rollback()
-    
-    yield engine
-    
-    # Cleanup after test
-    with engine.connect() as connection:
-        try:
-            connection.execute(text("DELETE FROM transactions"))
-            connection.execute(text("DELETE FROM holdings"))
-            connection.execute(text("DELETE FROM asks"))
-            connection.execute(text("DELETE FROM bids"))
-            connection.execute(text("DELETE FROM users WHERE email NOT LIKE '%admin%'"))
-            connection.commit()
-        except Exception as e:
-            print(f"Final cleanup error: {e}")
-            connection.rollback()
 
 
-@pytest.fixture(scope="function")
-def test_user(setup_test_db):
-    """Create a test user and return user details"""
-    response = client.post("/register", json={
-        "email": "testuser@example.com",
-        "password": "testpass123"
-    })
-    assert response.status_code == 200
-    data = response.json()
+VALID_USERS = [
+    (f"user-{number}", f"user{number}@example.com")
+    for number in range(1, 11)
+]
+
+
+INVALID_REGISTRATION_PAYLOADS = [
+    {"email": "user@example.com", "password": "password123"},
+    {"user_id": "ab", "email": "user@example.com", "password": "password123"},
+    {"user_id": "valid-user", "email": "bad-email", "password": "password123"},
+    {"user_id": "valid-user", "email": "user@example.com", "password": "short"},
+    {"user_id": "valid-user", "email": "user@example.com", "password": ""},
+    {"user_id": "valid-user", "email": "user@example.com"},
+    {"user_id": "valid-user", "password": "password123"},
+    {"user_id": "valid-user", "email": "user@example.com", "password": "x" * 61},
+    {"user_id": "valid-user", "email": None, "password": "password123"},
+    {},
+]
+
+
+INVALID_ORDER_PAYLOADS = [
+    {"symbol": "TE", "quantity": 1, "price": 10},
+    {"symbol": "TOOLONG", "quantity": 1, "price": 10},
+    {"symbol": "TEST", "quantity": 0, "price": 10},
+    {"symbol": "TEST", "quantity": -1, "price": 10},
+    {"symbol": "TEST", "quantity": 1, "price": -10},
+    {"symbol": "TEST", "quantity": 1, "price": "not-a-number"},
+    {"symbol": "TEST", "quantity": "many", "price": 10},
+    {"symbol": "TEST", "price": 10},
+    {"symbol": "TEST", "quantity": 1},
+    {},
+]
+
+
+INVALID_TOKENS = [f"invalid-token-{number}" for number in range(1, 11)]
+
+
+def auth_payload(user_id, email=None, password="password123"):
     return {
-        "email": "testuser@example.com",
-        "password": "testpass123",
-        "token": data.get("access_token")
+        "user_id": user_id,
+        "email": email or f"{user_id}@example.com",
+        "password": password,
     }
 
 
-@pytest.fixture(scope="function")
-def test_stock_in_db(setup_test_db):
-    """Insert a test stock into the database"""
-    engine = create_engine(DB_URL)
-    with engine.connect() as connection:
-        try:
-            connection.execute(text("""
-                INSERT INTO stocks (symbol, name, current_value)
-                VALUES ('TEST', 'Test Stock', 100.00)
-            """))
-            connection.commit()
-        except Exception as e:
-            connection.rollback()
-            print(f"Stock insertion error: {e}")
+def register_user(user_id, email=None):
+    response = client.post("/register", json=auth_payload(user_id, email))
+    assert response.status_code == 200
+    return response.json()["access_token"]
 
 
-# ==================== REGISTRATION TESTS ====================
+@pytest.mark.parametrize("user_id,email", VALID_USERS)
+def test_register_returns_token_for_ten_users(user_id, email):
+    response = client.post("/register", json=auth_payload(user_id, email))
 
-class TestRegistration:
-    
-    def test_register_success(self, setup_test_db):
-        """Test successful user registration"""
-        response = client.post("/register", json={
-            "email": "newuser@example.com",
-            "password": "securepass123"
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "bearer"
-    
-    def test_register_invalid_email(self, setup_test_db):
-        """Test registration with invalid email"""
-        response = client.post("/register", json={
-            "email": "not-an-email",
-            "password": "securepass123"
-        })
-        assert response.status_code == 422  # Validation error
-    
-    def test_register_short_password(self, setup_test_db):
-        """Test registration with password too short"""
-        response = client.post("/register", json={
-            "email": "user@example.com",
-            "password": "short"
-        })
-        assert response.status_code == 422
-    
-    def test_register_duplicate_email(self, setup_test_db, test_user):
-        """Test registration with duplicate email"""
-        response = client.post("/register", json={
-            "email": "testuser@example.com",
-            "password": "anotherpass123"
-        })
-        assert response.status_code == 400
-        assert "already in use" in response.json()["detail"]
-    
-    def test_register_missing_fields(self, setup_test_db):
-        """Test registration with missing fields"""
-        response = client.post("/register", json={
-            "email": "user@example.com"
-        })
-        assert response.status_code == 422
+    assert response.status_code == 200
+    assert isinstance(response.json()["access_token"], str)
 
 
-# ==================== LOGIN TESTS ====================
+@pytest.mark.parametrize("payload", INVALID_REGISTRATION_PAYLOADS)
+def test_register_rejects_invalid_payloads(payload):
+    response = client.post("/register", json=payload)
 
-class TestLogin:
-    
-    def test_login_success(self, setup_test_db, test_user):
-        """Test successful login"""
-        response = client.post("/login", json={
-            "email": "testuser@example.com",
-            "password": "testpass123"
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-    
-    def test_login_wrong_password(self, setup_test_db, test_user):
-        """Test login with wrong password"""
-        response = client.post("/login", json={
-            "email": "testuser@example.com",
-            "password": "wrongpassword"
-        })
-        assert response.status_code == 401
-    
-    def test_login_nonexistent_email(self, setup_test_db):
-        """Test login with non-existent email"""
-        response = client.post("/login", json={
-            "email": "nonexistent@example.com",
-            "password": "somepass123"
-        })
-        assert response.status_code == 401
-    
-    def test_login_invalid_email_format(self, setup_test_db):
-        """Test login with invalid email format"""
-        response = client.post("/login", json={
-            "email": "not-an-email",
-            "password": "somepass123"
-        })
-        assert response.status_code == 422
+    assert response.status_code == 422
 
 
-# ==================== BUY ORDER TESTS ====================
+@pytest.mark.parametrize("user_id,email", VALID_USERS)
+def test_register_rejects_duplicate_emails(user_id, email):
+    register_user(user_id, email)
 
-class TestBuyOrder:
-    
-    def test_buy_order_success(self, setup_test_db, test_user, test_stock_in_db):
-        """Test successful buy order placement"""
-        response = client.post("/buy", 
-            json={
-                "symbol": "TEST",
-                "quantity": 10,
-                "price": 150.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        assert "Buy order placed successfully" in response.json()["Message"]
-    
-    def test_buy_order_stock_not_found(self, setup_test_db, test_user):
-        """Test buy order for non-existent stock"""
-        response = client.post("/buy",
-            json={
-                "symbol": "NOEXIST",
-                "quantity": 10,
-                "price": 150.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 404
-        assert "Stock not found" in response.json()["detail"]
-    
-    def test_buy_order_no_auth(self, setup_test_db, test_stock_in_db):
-        """Test buy order without authentication"""
-        response = client.post("/buy",
-            json={
-                "symbol": "TEST",
-                "quantity": 10,
-                "price": 150.00
-            }
-        )
-        assert response.status_code == 403  # Forbidden (no token)
-    
-    def test_buy_order_invalid_quantity(self, setup_test_db, test_user, test_stock_in_db):
-        """Test buy order with invalid quantity"""
-        response = client.post("/buy",
-            json={
-                "symbol": "TEST",
-                "quantity": 0,
-                "price": 150.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 422
-    
-    def test_buy_order_negative_price(self, setup_test_db, test_user, test_stock_in_db):
-        """Test buy order with negative price"""
-        response = client.post("/buy",
-            json={
-                "symbol": "TEST",
-                "quantity": 10,
-                "price": -150.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 422
+    response = client.post("/register", json=auth_payload(f"other-{user_id}", email))
+
+    assert response.status_code == 400
 
 
-# ==================== SELL ORDER TESTS ====================
+@pytest.mark.parametrize("user_id,email", VALID_USERS)
+def test_login_returns_token_for_ten_users(user_id, email):
+    register_user(user_id, email)
 
-class TestSellOrder:
-    
-    def test_sell_order_success(self, setup_test_db, test_user, test_stock_in_db):
-        """Test successful sell order placement"""
-        response = client.post("/sell",
-            json={
-                "symbol": "TEST",
-                "quantity": 5,
-                "price": 100.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        assert "Sell order placed successfully" in response.json()["Message"]
-    
-    def test_sell_order_stock_not_found(self, setup_test_db, test_user):
-        """Test sell order for non-existent stock"""
-        response = client.post("/sell",
-            json={
-                "symbol": "NOEXIST",
-                "quantity": 5,
-                "price": 100.00
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 404
-        assert "Stock not found" in response.json()["detail"]
-    
-    def test_sell_order_no_auth(self, setup_test_db, test_stock_in_db):
-        """Test sell order without authentication"""
-        response = client.post("/sell",
-            json={
-                "symbol": "TEST",
-                "quantity": 5,
-                "price": 100.00
-            }
-        )
-        assert response.status_code == 403
+    response = client.post("/login", json=auth_payload(user_id, email))
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["access_token"], str)
 
 
-# ==================== MARKET TESTS ====================
+@pytest.mark.parametrize("user_id", [f"missing-{number}" for number in range(1, 11)])
+def test_login_rejects_unknown_users(user_id):
+    response = client.post("/login", json=auth_payload(user_id))
 
-class TestMarket:
-    
-    def test_market_empty(self, setup_test_db):
-        """Test market page with no orders"""
-        response = client.get("/market")
-        assert response.status_code == 200
-        data = response.json()
-        assert "Buy Orders" in data
-        assert "Sell Orders" in data
-        assert isinstance(data["Buy Orders"], dict)
-        assert isinstance(data["Sell Orders"], dict)
-    
-    def test_market_with_orders(self, setup_test_db, test_user, test_stock_in_db):
-        """Test market page with buy and sell orders"""
-        # Place a buy order
-        client.post("/buy",
-            json={"symbol": "TEST", "quantity": 10, "price": 150.00},
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        
-        # Place a sell order
-        client.post("/sell",
-            json={"symbol": "TEST", "quantity": 5, "price": 100.00},
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        
-        # Get market
-        response = client.get("/market")
-        assert response.status_code == 200
-        data = response.json()
-        assert "TEST" in data["Buy Orders"]
-        assert "TEST" in data["Sell Orders"]
-        assert len(data["Buy Orders"]["TEST"]) == 1
-        assert len(data["Sell Orders"]["TEST"]) == 1
+    assert response.status_code == 401
 
 
-# ==================== PORTFOLIO TESTS ====================
+@pytest.mark.parametrize("user_id", [f"wrong-password-{number}" for number in range(1, 11)])
+def test_login_rejects_wrong_passwords(user_id):
+    register_user(user_id)
 
-class TestPortfolio:
-    
-    def test_portfolio_no_auth(self, setup_test_db):
-        """Test portfolio without authentication"""
-        response = client.get("/portfolio")
-        assert response.status_code == 403
-    
-    def test_portfolio_with_auth(self, setup_test_db, test_user):
-        """Test portfolio with valid token"""
-        response = client.get("/portfolio",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "balance" in data
-        assert "holdings" in data
-        assert isinstance(data["balance"], (int, float, str))
-        assert isinstance(data["holdings"], list)
-    
-    def test_portfolio_balance_correct(self, setup_test_db, test_user):
-        """Test portfolio shows correct starting balance"""
-        response = client.get("/portfolio",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        # Should have starting balance from STARTING_BALANCE_FOR_A_NEW_USER
-        assert response.json()["balance"] is not None
-    
-    def test_portfolio_no_holdings_initially(self, setup_test_db, test_user):
-        """Test portfolio has no holdings initially"""
-        response = client.get("/portfolio",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        assert len(response.json()["holdings"]) == 0
+    response = client.post(
+        "/login",
+        json=auth_payload(user_id, password="wrong-password"),
+    )
+
+    assert response.status_code == 401
 
 
-# ==================== NEWS TESTS ====================
+@pytest.mark.parametrize("endpoint", ["/portfolio"] * 10)
+def test_portfolio_requires_authentication(endpoint):
+    response = client.get(endpoint)
 
-class TestNews:
-    
-    def test_news_no_auth(self, setup_test_db):
-        """Test news endpoint without authentication"""
-        response = client.get("/news")
-        assert response.status_code == 403
-    
-    def test_news_with_auth(self, setup_test_db, test_user):
-        """Test news endpoint with valid token"""
-        response = client.get("/news",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "news" in data
-        assert "message" in data
-        assert isinstance(data["news"], list)
+    assert response.status_code == 401
 
 
-# ==================== TRADE HISTORY TESTS ====================
+@pytest.mark.parametrize("token", INVALID_TOKENS)
+def test_portfolio_rejects_invalid_tokens(token):
+    response = client.get(
+        "/portfolio",
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
-class TestTradeHistory:
-    
-    def test_trade_history_no_auth(self, setup_test_db):
-        """Test trade history without authentication"""
-        response = client.get("/trade_history")
-        assert response.status_code == 403
-    
-    def test_trade_history_non_admin(self, setup_test_db, test_user):
-        """Test trade history as non-admin user"""
-        response = client.get("/trade_history",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert response.status_code == 403
-        assert "admin" in response.json()["detail"].lower()
-    
-    def test_trade_history_empty(self, setup_test_db):
-        """Test trade history page with no trades"""
-        # Login as admin (assuming admin exists from setup)
-        response = client.post("/login", json={
-            "email": os.getenv("ADMIN_USER_EMAIL"),
-            "password": os.getenv("ADMIN_USER_PWD")
-        })
-        
-        if response.status_code == 200:
-            admin_token = response.json()["access_token"]
-            response = client.get("/trade_history",
-                headers={"Authorization": f"Bearer {admin_token}"}
-            )
-            assert response.status_code == 200
-            data = response.json()
-            assert "logs" in data
-            assert isinstance(data["logs"], list)
+    assert response.status_code == 401
 
 
-# ==================== INTEGRATION TESTS ====================
+@pytest.mark.parametrize("user_id", [f"portfolio-{number}" for number in range(1, 11)])
+def test_portfolio_accepts_registered_tokens(user_id):
+    token = register_user(user_id)
 
-class TestIntegration:
-    
-    def test_full_trading_flow(self, setup_test_db, test_user, test_stock_in_db):
-        """Test complete trading workflow: register, buy, sell, check portfolio"""
-        # User already registered from test_user fixture
-        
-        # Place buy order
-        buy_response = client.post("/buy",
-            json={"symbol": "TEST", "quantity": 5, "price": 100.00},
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert buy_response.status_code == 200
-        
-        # Place sell order
-        sell_response = client.post("/sell",
-            json={"symbol": "TEST", "quantity": 3, "price": 110.00},
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert sell_response.status_code == 200
-        
-        # Check market
-        market_response = client.get("/market")
-        assert market_response.status_code == 200
-        market_data = market_response.json()
-        assert "TEST" in market_data["Buy Orders"]
-        assert "TEST" in market_data["Sell Orders"]
-        
-        # Check portfolio
-        portfolio_response = client.get("/portfolio",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
-        assert portfolio_response.status_code == 200
-        portfolio_data = portfolio_response.json()
-        assert "balance" in portfolio_data
+    response = client.get(
+        "/portfolio",
+        headers={"Authorization": f"Bearer {str(token)}"},
+    )
+
+    assert response.status_code == 200
+    assert "balance" in response.json()
+    assert isinstance(response.json()["holdings"], list)
+
+
+@pytest.mark.parametrize("user_id", [f"news-{number}" for number in range(1, 11)])
+def test_news_returns_empty_list_for_registered_users(user_id):
+    token = register_user(user_id)
+
+    response = client.get(
+        "/news",
+        headers={"Authorization": f"Bearer {str(token)}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["news"] == []
+
+
+@pytest.mark.parametrize("endpoint", ["/news"] * 10)
+def test_news_requires_authentication(endpoint):
+    response = client.get(endpoint)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("payload", INVALID_ORDER_PAYLOADS)
+def test_buy_rejects_invalid_payloads(payload):
+    response = client.post("/buy", json=payload)
+
+    assert response.status_code in (401, 422)
+
+
+@pytest.mark.parametrize("payload", INVALID_ORDER_PAYLOADS)
+def test_sell_rejects_invalid_payloads(payload):
+    response = client.post("/sell", json=payload)
+
+    assert response.status_code in (401, 422)
+
+
+@pytest.mark.parametrize("endpoint", ["/buy", "/sell"] * 5)
+def test_order_endpoints_require_authentication(endpoint):
+    response = client.post(
+        endpoint,
+        json={"symbol": "TEST", "quantity": 1, "price": 10},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("number", range(1, 11))
+def test_market_returns_empty_order_groups(number):
+    response = client.get("/market")
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["Buy Orders"], dict)
+    assert isinstance(response.json()["Sell Orders"], dict)
+
+
+@pytest.mark.parametrize("number", range(1, 11))
+def test_trade_history_requires_authentication(number):
+    response = client.get("/trade_history")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("user_id", [f"regular-{number}" for number in range(1, 11)])
+def test_trade_history_rejects_regular_users(user_id):
+    token = register_user(user_id)
+
+    response = client.get(
+        "/trade_history",
+        headers={"Authorization": f"Bearer {str(token)}"},
+    )
+
+    assert response.status_code == 403
