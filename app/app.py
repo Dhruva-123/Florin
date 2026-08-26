@@ -83,7 +83,8 @@ async def login_authenticator(token : str = Depends(oauth2scheme)):
     else:
         return None
 
-### Public pages
+
+### Public endpoints
 
 #Login page
 @app.post("/login")
@@ -105,7 +106,6 @@ async def login_page(login_details : userAuth):
         token = jwt.encode({"user_id" : user_id}, SECRET_KEY, algorithm="HS256")
         return {"access_token" : token}
     raise HTTPException(status_code = 401, detail = "Wrong Login Credentials")
-
 #Register page
 @app.post("/register")
 async def register_page(login_details : userAuth):
